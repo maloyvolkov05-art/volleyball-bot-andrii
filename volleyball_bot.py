@@ -1,6 +1,6 @@
 """
 Волейбольний бот з обліком відвідування та оплати
-- Щоп'ятниці о 12:00 надсилає опитування
+- Щосуботи о 9:00 надсилає ОДНЕ опитування (дублі заблоковані)
 - Хто натиснув ✅ → автоматично в Excel як "прийде"
 - /attended — тільки для людей поза Telegram
 - /paid — тільки в особистому чаті з ботом
@@ -52,10 +52,9 @@ def save_data(data: dict) -> None:
 
 
 def get_next_saturday() -> str:
+    """Повертає найближчу суботу (включно з сьогодні, якщо сьогодні субота)."""
     today = datetime.now()
-    days_ahead = 5 - today.weekday()
-    if days_ahead <= 0:
-        days_ahead += 7
+    days_ahead = (5 - today.weekday()) % 7  # 0 якщо сьогодні субота
     return (today + timedelta(days=days_ahead)).strftime("%Y-%m-%d")
 
 
@@ -82,7 +81,7 @@ def find_player(session: dict, search: str) -> tuple[str | None, dict | None]:
 async def cmd_start(message: Message):
     await message.answer(
         "🏐 <b>Волейбольний бот</b>\n\n"
-        "Щоп'ятниці о 12:00 надсилаю опитування.\n"
+        "Щосуботи о 9:00 надсилаю одне опитування.\n"
         "Хто натискає ✅ — автоматично відмічається як учасник.\n\n"
         "<b>Команди:</b>\n"
         "/status   — хто йде, скільки зібрано\n"
@@ -123,6 +122,14 @@ async def send_poll(chat_id: int = None):
         return
 
     saturday = get_next_saturday()
+    data = load_data()
+    ensure_session(data, saturday)
+
+    # ── Захист від дублів: якщо опитування вже є — не надсилаємо ──
+    if data["sessions"][saturday].get("poll_id"):
+        logging.info(f"Опитування на {saturday} вже існує — пропускаємо.")
+        return
+
     dt = datetime.strptime(saturday, "%Y-%m-%d")
 
     msg = await bot.send_poll(
@@ -133,14 +140,22 @@ async def send_poll(chat_id: int = None):
         allows_multiple_answers=False
     )
 
-    data = load_data()
-    ensure_session(data, saturday)
     data["sessions"][saturday]["poll_id"] = str(msg.poll.id)
     save_data(data)
+    logging.info(f"Опитування надіслано для {saturday}")
 
 
 @dp.message(Command("poll"))
 async def cmd_poll(message: Message):
+    saturday = get_next_saturday()
+    data = load_data()
+    if data.get("sessions", {}).get(saturday, {}).get("poll_id"):
+        dt = datetime.strptime(saturday, "%Y-%m-%d")
+        await message.answer(
+            f"⚠️ Опитування на суботу {dt.strftime('%d.%m.%Y')} вже надіслано.\n"
+            "Нове не створюється — щоб уникнути дублів."
+        )
+        return
     await send_poll(message.chat.id)
 
 
@@ -363,10 +378,16 @@ async def cmd_excel(message: Message):
         await message.answer("Даних ще немає.")
         return
 
-    filename = build_excel(sessions)
-    doc = open(filename, "rb")
-    await message.answer_document(document=doc, caption="📊 Таблиця відвідування та оплати")
-    doc.close()
+    try:
+        filename = build_excel(sessions)
+        with open(filename, "rb") as f:
+            file_bytes = f.read()
+        from aiogram.types import BufferedInputFile
+        doc = BufferedInputFile(file_bytes, filename="volleyball.xlsx")
+        await message.answer_document(document=doc, caption="📊 Таблиця відвідування та оплати")
+    except Exception as e:
+        logging.exception("Помилка при створенні Excel")
+        await message.answer(f"❌ Помилка при створенні таблиці: {e}")
 
 
 def build_excel(sessions: dict, filename: str = "volleyball.xlsx") -> str:
@@ -484,13 +505,13 @@ def setup_scheduler():
     scheduler.add_job(
         send_poll,
         trigger="cron",
-        day_of_week="fri",
-        hour=12,
+        day_of_week="sat",
+        hour=9,
         minute=0,
         timezone="Europe/Kyiv"
     )
     scheduler.start()
-    logging.info("Планувальник запущено — щоп'ятниці о 12:00")
+    logging.info("Планувальник запущено — щосуботи о 9:00")
 
 
 async def main():
