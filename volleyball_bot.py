@@ -31,7 +31,7 @@ CHAT_ID   = int(os.environ.get("CHAT_ID", 0)) or None
 PRICE     = 2.5
 DATA_FILE = "volleyball_data.json"
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-GEMINI_MODEL   = "gemini-2.5-flash"  # безкоштовна модель; якщо Google її зніме з підтримки — заміните на актуальну
+GEMINI_MODEL   = "gemini-3.6-flash"  # безкоштовна модель; якщо Google її зніме з підтримки — заміните на актуальну
 # ============================================================
 
 bot = Bot(token=BOT_TOKEN)
