@@ -15,11 +15,11 @@ from datetime import datetime, timedelta
 
 import openpyxl
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
-from aiogram import Bot, Dispatcher
+from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
 from aiogram.types import Message, PollAnswer
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from aiohttp import web
+from aiohttp import web, ClientSession
 
 logging.basicConfig(level=logging.INFO)
 
@@ -30,6 +30,8 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN")
 CHAT_ID   = int(os.environ.get("CHAT_ID", 0)) or None
 PRICE     = 2.5
 DATA_FILE = "volleyball_data.json"
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+GEMINI_MODEL   = "gemini-2.5-flash"  # безкоштовна модель; якщо Google її зніме з підтримки — заміните на актуальну
 # ============================================================
 
 bot = Bot(token=BOT_TOKEN)
@@ -500,6 +502,93 @@ def build_excel(sessions: dict, filename: str = "volleyball.xlsx") -> str:
 
 
 # ============================================================
+# Нейронка (Google Gemini) — відповідає на питання в чаті
+# ============================================================
+
+BOT_USERNAME = None  # заповнюється при старті
+
+
+async def ask_gemini(question: str) -> str:
+    """Надсилає запит до Gemini API і повертає текст відповіді."""
+    if not GEMINI_API_KEY:
+        return "⚠️ Нейронка ще не підключена — не заданий GEMINI_API_KEY."
+
+    url = (
+        f"https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{GEMINI_MODEL}:generateContent"
+    )
+
+    async with ClientSession() as session:
+        try:
+            async with session.post(
+                url,
+                headers={
+                    "x-goog-api-key": GEMINI_API_KEY,
+                    "content-type": "application/json",
+                },
+                json={
+                    "system_instruction": {
+                        "parts": [{
+                            "text": (
+                                "Ти — дружній помічник волейбольного чату. "
+                                "Відповідай коротко (2-4 речення), українською, "
+                                "по суті питання."
+                            )
+                        }]
+                    },
+                    "contents": [
+                        {"role": "user", "parts": [{"text": question}]}
+                    ],
+                },
+                timeout=30,
+            ) as resp:
+                data = await resp.json()
+                if resp.status != 200:
+                    logging.error(f"Gemini API error: {data}")
+                    return "❌ Не вдалося отримати відповідь від нейронки."
+                candidates = data.get("candidates", [])
+                if not candidates:
+                    return "🤔 Нейронка не дала відповіді."
+                parts = candidates[0].get("content", {}).get("parts", [])
+                text = "".join(p.get("text", "") for p in parts).strip()
+                return text or "🤔 Нейронка не дала відповіді."
+        except Exception:
+            logging.exception("Помилка запиту до Gemini")
+            return "❌ Сталася помилка при зверненні до нейронки."
+
+
+def _is_addressed_to_bot(message: Message) -> bool:
+    """У групі бот відповідає тільки якщо його згадали (@ім'я) або
+    відповіли на його повідомлення. В особистому чаті — завжди."""
+    if message.chat.type == "private":
+        return True
+    if message.reply_to_message and message.reply_to_message.from_user and \
+            message.reply_to_message.from_user.is_bot and \
+            message.reply_to_message.from_user.username == BOT_USERNAME:
+        return True
+    if BOT_USERNAME and message.text and f"@{BOT_USERNAME}" in message.text:
+        return True
+    return False
+
+
+@dp.message(F.text & ~F.text.startswith("/"))
+async def handle_ai_question(message: Message):
+    if not _is_addressed_to_bot(message):
+        return
+
+    question = message.text
+    if BOT_USERNAME:
+        question = question.replace(f"@{BOT_USERNAME}", "").strip()
+
+    if not question:
+        return
+
+    await bot.send_chat_action(message.chat.id, "typing")
+    answer = await ask_gemini(question)
+    await message.reply(answer)
+
+
+# ============================================================
 # Планувальник
 # ============================================================
 def setup_scheduler():
@@ -533,6 +622,11 @@ async def run_health_server():
 
 
 async def main():
+    global BOT_USERNAME
+    me = await bot.get_me()
+    BOT_USERNAME = me.username
+    logging.info(f"Бот запущено як @{BOT_USERNAME}")
+
     setup_scheduler()
     await run_health_server()
     await dp.start_polling(bot)
