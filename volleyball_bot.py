@@ -583,6 +583,12 @@ async def handle_ai_question(message: Message):
     if not question:
         return
 
+    # ── Жартівлива фіксована відповідь ──
+    q_lower = question.lower().strip(" ?!.")
+    if q_lower in ("хто твій тато", "хто твій батько", "хто твой папа", "кто твой папа"):
+        await message.reply("Андрій Волков 🏐")
+        return
+
     await bot.send_chat_action(message.chat.id, "typing")
     answer = await ask_gemini(question)
     await message.reply(answer)
