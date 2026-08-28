@@ -1,6 +1,6 @@
 """
 Волейбольний бот з обліком відвідування та оплати
-- Щосуботи о 9:00 надсилає ОДНЕ опитування (дублі заблоковані)
+- Щочетверга о 12:00 надсилає ОДНЕ опитування на найближчу суботу (дублі заблоковані)
 - Хто натиснув ✅ → автоматично в Excel як "прийде"
 - /attended — тільки для людей поза Telegram
 - /paid — тільки в особистому чаті з ботом
@@ -81,7 +81,7 @@ def find_player(session: dict, search: str) -> tuple[str | None, dict | None]:
 async def cmd_start(message: Message):
     await message.answer(
         "🏐 <b>Волейбольний бот</b>\n\n"
-        "Щосуботи о 9:00 надсилаю одне опитування.\n"
+        "Щочетверга о 12:00 надсилаю одне опитування на найближчу суботу.\n"
         "Хто натискає ✅ — автоматично відмічається як учасник.\n\n"
         "<b>Команди:</b>\n"
         "/status   — хто йде, скільки зібрано\n"
@@ -505,13 +505,13 @@ def setup_scheduler():
     scheduler.add_job(
         send_poll,
         trigger="cron",
-        day_of_week="sat",
-        hour=9,
+        day_of_week="thu",
+        hour=12,
         minute=0,
         timezone="Europe/Kyiv"
     )
     scheduler.start()
-    logging.info("Планувальник запущено — щосуботи о 9:00")
+    logging.info("Планувальник запущено — щочетверга о 12:00")
 
 
 async def main():
